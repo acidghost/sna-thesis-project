@@ -9,12 +9,14 @@ import java.util.List;
 /**
  * Created by acidghost on 06/11/14.
  */
-public class MessageContent implements Serializable {
+public class MessageContent implements Serializable, Comparable<MessageContent> {
 
+    public String ID;
     public Interests[] interests;
     public List<AID> nodes;
 
-    public MessageContent(Interests[] interests, AID sender) {
+    public MessageContent(String ID, Interests[] interests, AID sender) {
+        this.ID = ID;
         this.interests = interests;
         nodes = new LinkedList<AID>();
         nodes.add(sender);
@@ -32,5 +34,24 @@ public class MessageContent implements Serializable {
 
     public int forwards() {
         return nodes.size()-2;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if(obj instanceof MessageContent) {
+            MessageContent msg = (MessageContent) obj;
+            return ID.equals(msg.ID);
+        }
+        return false;
+    }
+
+    @Override
+    public int hashCode() {
+        return ID.hashCode();
+    }
+
+    @Override
+    public int compareTo(MessageContent msg) {
+        return msg.ID.compareTo(ID);
     }
 }

@@ -26,6 +26,7 @@ public class Person extends Agent {
 
     private double agreableness;
     private double extroversion;
+    private double openness;
     private Interests[] interests;
 
     private AID[] neighbors;
@@ -36,6 +37,7 @@ public class Person extends Agent {
     public static int ticks = 0;
 
     private Set<String> seenThreads = new HashSet<String>();
+    private Map<Interests, Integer> interestsCountMap = new HashMap<Interests, Integer>();
 
     @Override
     protected void setup() {
@@ -45,23 +47,26 @@ public class Person extends Agent {
         Object[] args = getArguments();
         agreableness = (Double) args[0];
         extroversion = (Double) args[1];
-        interests = (Interests[]) args[2];
+        openness = (Double) args[2];
+        interests = (Interests[]) args[3];
 
         SequentialBehaviour sequential = new SequentialBehaviour(this);
         sequential.addSubBehaviour(new UpdateNeighbors(this));
         ParallelBehaviour parallel = new ParallelBehaviour();
-        parallel.addSubBehaviour(new ConsiderSendNewMessage(this, 100));
-        parallel.addSubBehaviour(new ReceiveAndForward());
+        parallel.addSubBehaviour(new ConsiderSendNewMessage(this, 200));
+        parallel.addSubBehaviour(new ReceiveAndForward(this, 200));
         sequential.addSubBehaviour(parallel);
         addBehaviour(sequential);
     }
 
     @Override
     protected void takeDown() {
+        /*
         NumberFormat formatter = new DecimalFormat("#0.00");
         String txt = "\n\n\n" +
                 "Agent " + getLocalName() + "\n" +
                 "Ext. " + formatter.format(extroversion) + " Agr. " + formatter.format(agreableness) + "\n" +
+                "Ope. " + formatter.format(openness) + "\n" +
                 "started: " + startedMessages + "\n" +
                 "received: " + receivedMessages + "\n" +
                 "forwardedFrom:\n";
@@ -69,6 +74,7 @@ public class Person extends Agent {
             txt += " - " + a.getLocalName() + ": " + forwardedFrom.get(a) + "\n";
         }
         System.out.println(txt);
+        */
     }
 
     protected class UpdateNeighbors extends OneShotBehaviour {
@@ -117,13 +123,19 @@ public class Person extends Agent {
                 ACLMessage message = new ACLMessage(ACLMessage.PROPAGATE);
                 message.setSender(getAID());
                 try {
-                    MessageContent messageContent = new MessageContent(new Interests[]{ interests[(int) (Math.random()*interests.length)] }, getAID());
+                    MessageContent messageContent = new MessageContent(
+                            UUID.randomUUID().toString(),
+                            new Interests[]{
+                                    //interests[(int) (Math.random()*interests.length)],
+                                    //interests[(int) (Math.random()*interests.length)],
+                                    interests[(int) (Math.random()*interests.length)]
+                            }, getAID());
                     message.setContentObject(messageContent);
                     for(AID neighbor : neighbors) {
                         message.addReceiver(neighbor);
                     }
                     myAgent.send(message);
-                    seenThreads.add(message.getConversationId());
+                    seenThreads.add(messageContent.ID);
                     startedMessages++;
                     logger.info("Sent message from " + getLocalName());
                 } catch (IOException e) {
@@ -133,9 +145,22 @@ public class Person extends Agent {
         }
     }
 
-    protected class ReceiveAndForward extends CyclicBehaviour {
-        private void considerAcquireInterest(List<Interests> msgInterests) {
+    protected class ReceiveAndForward extends TickerBehaviour {
+        public ReceiveAndForward(Agent a, long period) {
+            super(a, period);
+        }
 
+        private void considerAcquireInterest(List<Interests> msgInterests) {
+            List<Interests> myInterests = Arrays.asList(interests);
+            for(Interests interest : msgInterests) {
+                if(Math.random() <= ((0.8*openness) + (agreableness*0.2)) && !myInterests.contains(interest) && interestsCountMap.get(interest) > neighbors.length) {
+                    Interests[] tmp = new Interests[interests.length + 1];
+                    System.arraycopy(interests, 0, tmp, 0, interests.length);
+                    tmp[interests.length] = interest;
+                    interests = tmp;
+                    logger.severe("Interest infected!\n" + getLocalName() + " agent now has " + interests.length + " interests");
+                }
+            }
         }
 
         private double interestImpact(List<Interests> msgInterests) {
@@ -151,20 +176,23 @@ public class Person extends Agent {
         }
 
         @Override
-        public void action() {
+        protected void onTick() {
             ACLMessage message = receive();
             if(message != null) {
-                if(seenThreads.contains(message.getConversationId())) {
-                    return;
-                }
-
                 try {
                     receivedMessages++;
                     MessageContent content = (MessageContent) message.getContentObject();
                     logger.info(getLocalName() + " received from " + message.getSender().getLocalName());
 
+                    String conversationID = content.ID;
+                    if(seenThreads.contains(conversationID)) {
+                        return;
+                    } else {
+                        seenThreads.add(conversationID);
+                    }
+
                     double interestImpact = interestImpact(Arrays.asList(content.interests));
-                    double prob = (agreableness*extroversion) + ((1-agreableness*extroversion) * interestImpact);
+                    double prob = ((0.7*agreableness) * (0.3*extroversion)) + ((1 - ((0.7*agreableness) * (0.3*extroversion))) * interestImpact);
                     double random = Math.random();
                     logger.info(getLocalName() + "     PROB:  " + prob + "   RAND:   " + random);
                     if(random <= prob) {
@@ -172,12 +200,13 @@ public class Person extends Agent {
                         ACLMessage newMessage = new ACLMessage(ACLMessage.INFORM);
                         newMessage.setSender(getAID());
                         for(AID neighbor : neighbors) {
-                            if(!neighbor.equals(message.getSender())) {
+                            if(!neighbor.equals(message.getSender()) && !content.nodes.contains(neighbor)) {
                                 newMessage.addReceiver(neighbor);
                             }
                         }
                         content.nodes.add(getAID());
                         newMessage.setContentObject(content);
+                        //newMessage.setConversationId(conversationID);
                         send(newMessage);
                         if(forwardedFrom.containsKey(message.getSender())) {
                             forwardedFrom.put(message.getSender(), forwardedFrom.get(message.getSender())+1);
@@ -185,6 +214,17 @@ public class Person extends Agent {
                             forwardedFrom.put(message.getSender(), 1);
                         }
                         logger.info(getLocalName() + " forwarded a message from " + message.getSender().getLocalName());
+
+                        //  Increase counter for messages seen about a topic
+                        //  and then consider acquire new topic as interest
+                        for(Interests interest : content.interests) {
+                            Integer pastCount = interestsCountMap.get(interest);
+                            if(pastCount == null) {
+                                pastCount = 0;
+                            }
+                            interestsCountMap.put(interest, pastCount+1);
+                        }
+                        considerAcquireInterest(Arrays.asList(content.interests));
                     } else {
                         //  MESSAGE, your journey to Miss Italy ends here!
                         ACLMessage newMessage = new ACLMessage(ACLMessage.INFORM);

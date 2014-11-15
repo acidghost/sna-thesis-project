@@ -38,4 +38,13 @@ public enum Interests {
     public static Interests randomInterest()  {
         return VALUES.get(RANDOM.nextInt(SIZE));
     }
+
+    public static Interests randomInterestIncl(Interests... interests) {
+        List<Interests> lInterests = Collections.unmodifiableList(Arrays.asList(interests));
+        Interests interest;
+        do {
+            interest = randomInterest();
+        } while (!lInterests.contains(interest));
+        return interest;
+    }
 }

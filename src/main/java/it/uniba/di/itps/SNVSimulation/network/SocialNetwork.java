@@ -1,6 +1,7 @@
 package it.uniba.di.itps.SNVSimulation.network;
 
 import com.itextpdf.text.PageSize;
+import org.gephi.algorithms.shortestpath.DijkstraShortestPathAlgorithm;
 import org.gephi.data.attributes.api.AttributeColumn;
 import org.gephi.data.attributes.api.AttributeController;
 import org.gephi.data.attributes.api.AttributeModel;
@@ -25,15 +26,19 @@ import org.gephi.ranking.api.RankingController;
 import org.gephi.ranking.api.Transformer;
 import org.gephi.ranking.plugin.transformer.AbstractColorTransformer;
 import org.gephi.ranking.plugin.transformer.AbstractSizeTransformer;
+import org.gephi.statistics.plugin.Degree;
 import org.gephi.statistics.plugin.GraphDistance;
+import org.gephi.statistics.plugin.PageRank;
 import org.openide.util.Lookup;
 import processing.core.PApplet;
 
 import javax.swing.*;
-import java.awt.*;
+import java.awt.BorderLayout;
+import java.awt.Color;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -45,8 +50,11 @@ public class SocialNetwork {
     private Workspace workspace;
     private GraphModel graphModel;
     private AttributeColumn betweennessCol;
-    private AttributeColumn hubsCol;
+    private AttributeColumn degreeCol;
+    private AttributeColumn pageRankCol;
     private ImportController importController = Lookup.getDefault().lookup(ImportController.class);
+
+    private DijkstraShortestPathAlgorithm computedShortestPaths;
 
     public SocialNetwork() {
         pc = Lookup.getDefault().lookup(ProjectController.class);
@@ -77,7 +85,7 @@ public class SocialNetwork {
         return ids;
     }
 
-    public void generateGraph(int nodes, double wiringProb) {
+    public Map<String, Object> generateGraph(int iterations) {
         clearWorkspace();
 
         //  Generate a new random graph into a container
@@ -97,10 +105,10 @@ public class SocialNetwork {
         */
 
         BarabasiAlbertGeneralized baModel = new BarabasiAlbertGeneralized();
-        baModel.setN(nodes);
+        baModel.setN(iterations);
         baModel.setm0(1);
         baModel.setM(1);
-        baModel.setp(0.25);
+        baModel.setp(0.4);
         baModel.setq(0.0);
         baModel.generate(container.getLoader());
 
@@ -117,17 +125,53 @@ public class SocialNetwork {
         AttributeModel attributeModel = ac.getModel();
         attributeModel.getNodeTable().addColumn("agreableness", AttributeType.DOUBLE);
         attributeModel.getNodeTable().addColumn("extroversion", AttributeType.DOUBLE);
+        attributeModel.getNodeTable().addColumn("openness", AttributeType.DOUBLE);
+
+        //  Import the container into the workspace
+        importController.process(container, new DefaultProcessor(), workspace);
 
         //  Get Centrality
         GraphDistance distance = new GraphDistance();
         distance.setDirected(false);
+        distance.setNormalized(true);
         distance.execute(graphModel, attributeModel);
 
         //  Get Centrality column created
         betweennessCol = attributeModel.getNodeTable().getColumn(GraphDistance.BETWEENNESS);
 
-        //  Import the container into the workspace
-        importController.process(container, new DefaultProcessor(), workspace);
+        //  Get degree
+        Degree degree = new Degree();
+        degree.execute(graphModel, attributeModel);
+        //  Get degree column created
+        degreeCol = attributeModel.getNodeTable().getColumn(Degree.DEGREE);
+
+        //  Compute PageRank
+        PageRank pageRank = new PageRank();
+        pageRank.setUseEdgeWeight(false);
+        pageRank.setDirected(false);
+        pageRank.execute(graphModel, attributeModel);
+        pageRankCol = attributeModel.getNodeTable().getColumn(PageRank.PAGERANK);
+
+        Map<String, Object> ret = new HashMap<String, Object>();
+        ret.put("nodes", graphModel.getUndirectedGraph().getNodeCount());
+        ret.put("edges", graphModel.getUndirectedGraph().getEdgeCount());
+        return ret;
+    }
+
+    public int getMaximumDegree() {
+        int max = 0;
+        for(Node n : graphModel.getUndirectedGraph().getNodes()) {
+            Integer degree = (Integer) n.getNodeData().getAttributes().getValue(degreeCol.getIndex());
+            if(degree > max) {
+                max = degree;
+            }
+        }
+        return max;
+    }
+
+    public int getNodeDegree(int node) {
+        Node n = graphModel.getUndirectedGraph().getNode(node);
+        return (Integer) n.getNodeData().getAttributes().getValue(degreeCol.getIndex());
     }
 
     public double getBetweennessCentrality(int node) {
@@ -135,11 +179,77 @@ public class SocialNetwork {
         return (Double) n.getNodeData().getAttributes().getValue(betweennessCol.getIndex());
     }
 
-    public void addNodeAttributes(int node, double agreableness, double extroversion) {
+    public double getPageRank(int node) {
+        Node n = graphModel.getUndirectedGraph().getNode(node);
+        return (Double) n.getNodeData().getAttributes().getValue(pageRankCol.getIndex());
+    }
+
+    public int[] getFirstPageRanked(int k) {
+        if(k > getNodes().length) {
+            throw new IllegalArgumentException();
+        }
+
+        List<AbstractMap.SimpleEntry<Integer, Double>> ranks = new ArrayList<AbstractMap.SimpleEntry<Integer, Double>>();
+        for(Node node : graphModel.getUndirectedGraph().getNodes()) {
+            Double rank = (Double) node.getNodeData().getAttributes().getValue(pageRankCol.getIndex());
+            ranks.add(new AbstractMap.SimpleEntry<Integer, Double>(node.getId(), rank));
+        }
+        Collections.sort(ranks, new Comparator<AbstractMap.SimpleEntry<Integer, Double>>() {
+            @Override
+            public int compare(AbstractMap.SimpleEntry<Integer, Double> integerDoubleSimpleEntry, AbstractMap.SimpleEntry<Integer, Double> integerDoubleSimpleEntry2) {
+                double value1 = integerDoubleSimpleEntry.getValue();
+                double value2 = integerDoubleSimpleEntry2.getValue();
+                //  -1 and 1 inverted so that the first are the higher ranked
+                if(value1 > value2) {
+                    return -1;
+                } else if(value1 < value2) {
+                    return 1;
+                } else {
+                    return 0;
+                }
+            }
+        });
+
+        int[] nodes = new int[k];
+        for(int i=0; i<k; i++) {
+            nodes[i] = ranks.get(i).getKey();
+        }
+        return nodes;
+    }
+
+    public Map<Integer, Double> computeShortestPathDistances(int sourceNode) {
+        UndirectedGraph graph = graphModel.getUndirectedGraph();
+        computedShortestPaths = new DijkstraShortestPathAlgorithm(graph, graph.getNode(sourceNode));
+        computedShortestPaths.compute();
+        Map<NodeData, Double> distances = computedShortestPaths.getDistances();
+        Map<Integer, Double> retMap = new HashMap<Integer, Double>();
+        for(NodeData nodeData : distances.keySet()) {
+            retMap.put(Integer.parseInt(nodeData.getId()), distances.get(nodeData));
+        }
+        return retMap;
+    }
+
+    public List<Integer> getShortestPath(int targetNode) {
+        UndirectedGraph graph = graphModel.getUndirectedGraph();
+        computedShortestPaths.getPredecessor(graph.getNode(targetNode));
+        HashMap<NodeData, Double> distances = computedShortestPaths.getDistances();
+        int distance = (int) Math.round(distances.get(graph.getNode(targetNode).getNodeData()));
+        List<Integer> path = new ArrayList<Integer>();
+        Node node = graph.getNode(targetNode);
+        path.add(node.getId());
+        for(int i=0; i<distance-1; i++) {
+            node = computedShortestPaths.getPredecessor(node);
+            path.add(node.getId());
+        }
+        return path;
+    }
+
+    public void addNodeAttributes(int node, double agreableness, double extroversion, double openness) {
         Node n = graphModel.getUndirectedGraph().getNode(node);
         Attributes attrs = n.getNodeData().getAttributes();
         attrs.setValue("agreableness", agreableness);
         attrs.setValue("extroversion", extroversion);
+        attrs.setValue("openness", openness);
     }
 
     public void increaseEdgeWeight(int node1, int node2) {
@@ -228,8 +338,8 @@ public class SocialNetwork {
         AttributeColumn exCol = attributeModel.getNodeTable().getColumn("extroversion");
         Ranking exRanking = rankingController.getModel().getRanking(Ranking.NODE_ELEMENT, exCol.getId());
         AbstractSizeTransformer sizeTransformer = (AbstractSizeTransformer) rankingController.getModel().getTransformer(Ranking.NODE_ELEMENT, Transformer.RENDERABLE_SIZE);
-        sizeTransformer.setMinSize(3);
-        sizeTransformer.setMaxSize(20);
+        sizeTransformer.setMinSize(14);
+        sizeTransformer.setMaxSize(30);
         rankingController.transform(exRanking, sizeTransformer);
 
         //  Rank color by agreableness
@@ -256,7 +366,7 @@ public class SocialNetwork {
         previewModel.getProperties().putValue(PreviewProperty.NODE_LABEL_SHOW_BOX, Boolean.FALSE);
         //previewModel.getProperties().putValue(PreviewProperty.NODE_LABEL_BOX_OPACITY, 50);
         //previewModel.getProperties().putValue(PreviewProperty.NODE_LABEL_BOX_COLOR, new DependantColor(Color.LIGHT_GRAY));
-        previewModel.getProperties().putValue(PreviewProperty.EDGE_CURVED, Boolean.TRUE);
+        previewModel.getProperties().putValue(PreviewProperty.EDGE_CURVED, Boolean.FALSE);
         previewModel.getProperties().putValue(PreviewProperty.EDGE_OPACITY, 50);
         previewModel.getProperties().putValue(PreviewProperty.EDGE_RADIUS, 2f);
         previewModel.getProperties().putValue(PreviewProperty.BACKGROUND_COLOR, Color.WHITE);
