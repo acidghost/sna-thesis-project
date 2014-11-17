@@ -232,14 +232,14 @@ public class SocialNetwork {
     public List<Integer> getShortestPath(int targetNode) {
         UndirectedGraph graph = graphModel.getUndirectedGraph();
         computedShortestPaths.getPredecessor(graph.getNode(targetNode));
-        HashMap<NodeData, Double> distances = computedShortestPaths.getDistances();
-        int distance = (int) Math.round(distances.get(graph.getNode(targetNode).getNodeData()));
+        //HashMap<NodeData, Double> distances = computedShortestPaths.getDistances();
+        //int distance = (int) Math.round(distances.get(graph.getNode(targetNode).getNodeData()));
         List<Integer> path = new ArrayList<Integer>();
         Node node = graph.getNode(targetNode);
         path.add(node.getId());
-        for(int i=0; i<distance-1; i++) {
-            node = computedShortestPaths.getPredecessor(node);
+        while ((node = computedShortestPaths.getPredecessor(node)) != null) {
             path.add(node.getId());
+            //node = computedShortestPaths.getPredecessor(node);
         }
         return path;
     }

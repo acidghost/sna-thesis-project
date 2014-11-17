@@ -224,7 +224,7 @@ public class Person extends Agent {
                             }
                             interestsCountMap.put(interest, pastCount+1);
                         }
-                        considerAcquireInterest(Arrays.asList(content.interests));
+                        //considerAcquireInterest(Arrays.asList(content.interests));
                     } else {
                         //  MESSAGE, your journey to Miss Italy ends here!
                         ACLMessage newMessage = new ACLMessage(ACLMessage.INFORM);

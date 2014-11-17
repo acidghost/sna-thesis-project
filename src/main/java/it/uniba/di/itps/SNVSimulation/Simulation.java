@@ -1,9 +1,6 @@
 package it.uniba.di.itps.SNVSimulation;
 
-import it.uniba.di.itps.SNVSimulation.models.MessageCascade;
-import it.uniba.di.itps.SNVSimulation.models.MessageContent;
-import it.uniba.di.itps.SNVSimulation.models.Person;
-import it.uniba.di.itps.SNVSimulation.models.Trait;
+import it.uniba.di.itps.SNVSimulation.models.*;
 import it.uniba.di.itps.SNVSimulation.network.SocialNetwork;
 import jade.core.AID;
 import jade.core.Agent;
@@ -49,6 +46,9 @@ public class Simulation extends Agent {
     private boolean simulationStarted = false;
 
     private List<MessageContent> messages;
+
+    private Map<Integer, Integer> pageRankMap;
+    private Map<Integer, Integer> customRankMap;
 
     @Override
     protected void setup() {
@@ -121,61 +121,117 @@ public class Simulation extends Agent {
     }
 
     public void findInfluencers() {
-        int[] rankedNodes = socialNetwork.getFirstPageRanked(nNodes/3);
+        int[] pageRankedNodes = socialNetwork.getFirstPageRanked(nNodes);
         System.out.println("\n\nPageRank ranking:");
-        for(int i = 0; i < rankedNodes.length; i++) {
-            int node = rankedNodes[i];
-            System.out.println((i+1) + " - " + AGENTS_PREFIX + (node-1) + " " + socialNetwork.getPageRank(node));
+        for (int i = 0; i < pageRankedNodes.length; i++) {
+            int node = pageRankedNodes[i];
+            System.out.println((i + 1) + " - " + AGENTS_PREFIX + (node - 1) + " " + socialNetwork.getPageRank(node));
         }
 
-        int ticks = Person.ticks/nNodes;
-        if(ticks == 0) {
+        int ticks = Person.ticks / nNodes;
+        if (ticks == 0) {
             ticks = MAX_TICKS;
         }
-        List<AbstractMap.SimpleEntry<Integer, Double>> ranks = new ArrayList<AbstractMap.SimpleEntry<Integer, Double>>();
-        for(int i = 0; i < rankedNodes.length; i++) {
-            int node = rankedNodes[i];
-            AID aid = new AID(AGENTS_PREFIX + (node-1), AID.ISLOCALNAME);
+        List<AbstractMap.SimpleEntry<Integer, Double>> customRanks = new ArrayList<AbstractMap.SimpleEntry<Integer, Double>>();
+        for (int node : pageRankedNodes) {
+            AID aid = new AID(AGENTS_PREFIX + (node - 1), AID.ISLOCALNAME);
             Trait trait = traitsMap.get(aid);
             double rank = 0.0;
-            double denom = trait.extroversion * ticks;
+            double denominator = (1-trait.extroversion) * ticks;
             Map<Integer, Double> distances = socialNetwork.computeShortestPathDistances(node);
-            for(int vNode : socialNetwork.getNodes()) {
-                if(vNode != node) {
-                    double distance = distances.get(vNode);
-                    double numerator = 0;
-                    List<Integer> shortestPath = socialNetwork.getShortestPath(vNode);
-                    for(Integer nodeID : shortestPath) {
-                        AID vAid = new AID(AGENTS_PREFIX + (nodeID-1), AID.ISLOCALNAME);
-                        Trait vTrait = traitsMap.get(vAid);
-                        numerator += (0.7*vTrait.agreableness) * (0.3*vTrait.extroversion);
+            for (Interests interest : trait.interests) {
+                double nodeTopicRank = 0.0;
+                for (int vNode : socialNetwork.getNodes()) {
+                    if (vNode != node) {
+                        double distance = distances.get(vNode);
+                        double numerator = 0;
+                        List<Integer> shortestPath = socialNetwork.getShortestPath(vNode);
+                        for (Integer nodeID : shortestPath) {
+                            AID vAid = new AID(AGENTS_PREFIX + (nodeID - 1), AID.ISLOCALNAME);
+                            Trait vTrait = traitsMap.get(vAid);
+                            double personalityImpact = (0.7 * vTrait.agreableness) * (0.3 * vTrait.extroversion);
+                            List<Interests> interests = Arrays.asList(vTrait.interests);
+                            double topicInfluence = interests.contains(interest) ? 1 - personalityImpact : 0;
+                            numerator += personalityImpact + topicInfluence;
+                        }
+                        numerator = numerator / distance;
+                        nodeTopicRank += numerator / denominator;
                     }
-                    numerator = numerator/distance;
-                    rank += numerator/denom;
                 }
+                rank += nodeTopicRank;
             }
-            rank = rank + socialNetwork.getPageRank(node);
-            ranks.add(new AbstractMap.SimpleEntry<Integer, Double>(node, rank));
+            rank = (rank / trait.interests.length) * socialNetwork.getPageRank(node);
+            customRanks.add(new AbstractMap.SimpleEntry<Integer, Double>(node, rank));
         }
 
-        Collections.sort(ranks, new Comparator<AbstractMap.SimpleEntry<Integer, Double>>() {
+        Collections.sort(customRanks, new Comparator<AbstractMap.SimpleEntry<Integer, Double>>() {
             @Override
             public int compare(AbstractMap.SimpleEntry<Integer, Double> e1, AbstractMap.SimpleEntry<Integer, Double> e2) {
                 Double v1 = e1.getValue();
                 Double v2 = e2.getValue();
-                if(v1 > v2)
+                if (v1 > v2)
                     return -1;
-                else if(v1 < v2)
+                else if (v1 < v2)
                     return 1;
                 else
                     return 0;
             }
         });
         System.out.println("\n\nCustom ranking system:");
-        for (int i = 0; i < ranks.size(); i++) {
-            AbstractMap.SimpleEntry<Integer, Double> entry = ranks.get(i);
+        for (int i = 0; i < customRanks.size(); i++) {
+            AbstractMap.SimpleEntry<Integer, Double> entry = customRanks.get(i);
             System.out.println((i + 1) + " - " + AGENTS_PREFIX + (entry.getKey() - 1) + " " + entry.getValue());
         }
+
+
+        //  Build two maps containing nodes and rank-position
+        pageRankMap = new HashMap<Integer, Integer>();
+        for (int i = 0; i < pageRankedNodes.length; i++) {
+            pageRankMap.put(pageRankedNodes[i], i + 1);
+        }
+        customRankMap = new HashMap<Integer, Integer>();
+        for (int i = 0; i < customRanks.size(); i++) {
+            customRankMap.put(customRanks.get(i).getKey(), i + 1);
+        }
+
+        double correlation1 = kendallCorrelation(pageRankedNodes, pageRankMap, customRankMap);
+        System.out.println("\nKendall correlation between PageRank and CustomRank: " + correlation1);
+    }
+
+    private double kendallCorrelation(int[] nodes, Map<Integer, Integer> rankings1, Map<Integer, Integer> rankings2) {
+        //  Compute number of concordant and discordant pairs
+        int nConcordant = 0;
+        int nDiscordant = 0;
+        for (int i = 0; i < nodes.length; i++) {
+            int nodeA = nodes[i];
+            Integer rank1A = rankings1.get(nodeA);
+            Integer rank2A = rankings2.get(nodeA);
+            for (int j = i + 1; j < nodes.length; j++) {
+                int nodeB = nodes[j];
+                Integer rank1B = rankings1.get(nodeB);
+                Integer rank2B = rankings2.get(nodeB);
+                if(rank1A==null || rank2A== null || rank1B==null || rank2B==null) {
+                    nDiscordant++;
+                    continue;
+                }
+                if ((rank1A < rank2A && rank1B > rank2B) || (rank1A > rank2A && rank1B < rank2B)) {
+                    nDiscordant++;
+                } else {
+                    nConcordant++;
+                }
+            }
+        }
+
+        return (nConcordant - nDiscordant) / (0.5 * nodes.length * (nodes.length-1));
+    }
+
+    private double spearmanCorrelation(int[] nodes, Map<Integer, Integer> rankings1, Map<Integer, Integer> rankings2) {
+        double correlation = 0.0;
+        for(int node : nodes) {
+            int diff = rankings1.get(node) - rankings2.get(node);
+            correlation += Math.pow(diff, 2);
+        }
+        return 1 - ((6*correlation) / (nodes.length * (Math.pow(nodes.length, 2)-1)));
     }
 
     public void startSimulation() {
@@ -184,7 +240,6 @@ public class Simulation extends Agent {
         agentsMap = new HashMap<AID, AgentController>();
 
         messages = new ArrayList<MessageContent>();
-        int degreeThreshold = (int) (socialNetwork.getMaximumDegree()*0.1 + averageDegree);
         for(int nodeID : socialNetwork.getNodes()) {
             try {
                 //  Because the labels start from 0
@@ -357,12 +412,44 @@ public class Simulation extends Agent {
             aidsByInfluence.put(entry.getKey(), entry.getValue());
         }
 
+        //  Print top actual influencers and build a map containing actual nodes ranked by cumulative cascades' size
+        Map<Integer, Integer> actualInfluencers = new HashMap<Integer, Integer>();
         System.out.println("\n\nActual top cascades by size;");
         int pos=1;
         for(Map.Entry<AID, Integer> entry : aidsByInfluence.entrySet()) {
+            actualInfluencers.put(nodesMap.get(entry.getKey()), pos);
             System.out.println("- " + pos + " " + entry.getKey().getLocalName() + " " + entry.getValue());
             pos++;
         }
+        //  Complete the actual influencers map with the remaining "unseen" nodes
+        Set<Integer> seenNodes = actualInfluencers.keySet();
+        List<Integer> unseenNodes = new ArrayList<Integer>();
+        for(int node : socialNetwork.getNodes()) {
+            if(!seenNodes.contains(node)) {
+                unseenNodes.add(node);
+            }
+        }
+        for(int i=0; i<unseenNodes.size(); i++) {
+            actualInfluencers.put(unseenNodes.get(i), i+pos);
+        }
+
+        //  Build the considered node-set
+        int[] consideredNodes = new int[pageRankMap.size()];
+        int pointer = 0;
+        for (Integer node : pageRankMap.keySet()) {
+            consideredNodes[pointer] = node;
+            pointer++;
+        }
+
+        double kCorrelation1 = kendallCorrelation(consideredNodes, pageRankMap, actualInfluencers);
+        System.out.println("\nKendall's correlation between PageRank and actual: " + kCorrelation1);
+        double kCorrelation2 = kendallCorrelation(consideredNodes, customRankMap, actualInfluencers);
+        System.out.println("Kendall's correlation between CustomRank and actual: " + kCorrelation2);
+
+        double sCorrelation1 = spearmanCorrelation(consideredNodes, pageRankMap, actualInfluencers);
+        System.out.println("\nSpearman's correlation between PageRank and actual: " + sCorrelation1);
+        double sCorrelation2 = spearmanCorrelation(consideredNodes, customRankMap, actualInfluencers);
+        System.out.println("Spearman's correlation between CustomRank and actual: " + sCorrelation2);
 
         Person.ticks = 0;
         simulationStarted = false;
