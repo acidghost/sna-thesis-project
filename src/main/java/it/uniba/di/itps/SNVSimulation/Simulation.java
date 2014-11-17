@@ -149,7 +149,7 @@ public class Simulation extends Agent {
                         for (Integer nodeID : shortestPath) {
                             AID vAid = new AID(AGENTS_PREFIX + (nodeID - 1), AID.ISLOCALNAME);
                             Trait vTrait = traitsMap.get(vAid);
-                            double personalityImpact = (0.7 * vTrait.agreableness) * (0.3 * vTrait.extroversion);
+                            double personalityImpact = (0.7 * vTrait.agreableness) + (0.3 * vTrait.extroversion);
                             List<Interests> interests = Arrays.asList(vTrait.interests);
                             double topicInfluence = interests.contains(interest) ? 1 - personalityImpact : 0;
                             numerator += personalityImpact + topicInfluence;

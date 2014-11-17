@@ -192,7 +192,7 @@ public class Person extends Agent {
                     }
 
                     double interestImpact = interestImpact(Arrays.asList(content.interests));
-                    double prob = ((0.7*agreableness) * (0.3*extroversion)) + ((1 - ((0.7*agreableness) * (0.3*extroversion))) * interestImpact);
+                    double prob = ((0.7*agreableness) + (0.3*extroversion)) + ((1 - ((0.7*agreableness) + (0.3*extroversion))) * interestImpact);
                     double random = Math.random();
                     logger.info(getLocalName() + "     PROB:  " + prob + "   RAND:   " + random);
                     if(random <= prob) {
