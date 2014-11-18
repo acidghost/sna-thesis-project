@@ -49,12 +49,13 @@ public class Person extends Agent {
         extroversion = (Double) args[1];
         openness = (Double) args[2];
         interests = (Interests[]) args[3];
+        int timingOfBehaviours = (Integer) args[4];
 
         SequentialBehaviour sequential = new SequentialBehaviour(this);
         sequential.addSubBehaviour(new UpdateNeighbors(this));
         ParallelBehaviour parallel = new ParallelBehaviour();
-        parallel.addSubBehaviour(new ConsiderSendNewMessage(this, 200));
-        parallel.addSubBehaviour(new ReceiveAndForward(this, 200));
+        parallel.addSubBehaviour(new ConsiderSendNewMessage(this, timingOfBehaviours));
+        parallel.addSubBehaviour(new ReceiveAndForward(this, timingOfBehaviours));
         sequential.addSubBehaviour(parallel);
         addBehaviour(sequential);
     }

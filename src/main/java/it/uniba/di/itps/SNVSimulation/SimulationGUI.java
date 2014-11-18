@@ -25,6 +25,10 @@ public class SimulationGUI extends JFrame {
     private JButton txtExportFull;
     private JProgressBar progressBar;
     private JLabel lblFeedback;
+    private JCheckBox chkHomophily;
+    private JCheckBox chkCharts;
+    private JTextField txtTiming;
+    private JSlider sldTiming;
 
     private boolean simulationStarted = false;
     private int generatedNodes = 0;
@@ -43,7 +47,7 @@ public class SimulationGUI extends JFrame {
         btnGenerate.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent actionEvent) {
-                Map<String, Object> graphData = simulation.generateGraph(sldNodes.getValue());
+                Map<String, Object> graphData = simulation.generateGraph(sldNodes.getValue(), chkHomophily.isSelected());
                 generatedNodes = (Integer) graphData.get("nodes");
                 generatedEdges = (Integer) graphData.get("edges");
                 lblFeedback.setText("Successfully generated graph with " + generatedNodes + " nodes and " + generatedEdges + " edges\n\nNow start the simulation...");
@@ -76,7 +80,7 @@ public class SimulationGUI extends JFrame {
             @Override
             public void actionPerformed(ActionEvent actionEvent) {
                 if(!simulationStarted) {
-                    simulation.startSimulation();
+                    simulation.startSimulation(sldTiming.getValue());
                     simulationStarted = true;
                     btnGenerate.setEnabled(false);
                     sldNodes.setEnabled(false);
@@ -97,6 +101,20 @@ public class SimulationGUI extends JFrame {
             @Override
             public void actionPerformed(ActionEvent actionEvent) {
                 simulation.exportGraphFull();
+            }
+        });
+
+        chkCharts.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent actionEvent) {
+                simulation.setDisplayCharts(chkCharts.isSelected());
+            }
+        });
+
+        sldTiming.addChangeListener(new ChangeListener() {
+            @Override
+            public void stateChanged(ChangeEvent changeEvent) {
+                txtTiming.setText("" + sldTiming.getValue());
             }
         });
     }

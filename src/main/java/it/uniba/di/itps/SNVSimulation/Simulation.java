@@ -16,7 +16,6 @@ import jade.lang.acl.UnreadableException;
 import jade.util.Logger;
 import jade.wrapper.AgentController;
 import jade.wrapper.StaleProxyException;
-import org.gephi.algorithms.shortestpath.DijkstraShortestPathAlgorithm;
 
 import java.awt.Point;
 import java.awt.geom.Point2D;
@@ -31,11 +30,13 @@ public class Simulation extends Agent {
     public static final String AGENT_NAME = "SimAgent";
     public static final String EXPORT_PATH = "./export/";
     private static final int MAX_TICKS = 400;
+    private static final double SCALE_NODE_RANKED = 1.0;
 
     private Logger logger = Logger.getJADELogger(getClass().getName());
 
     private SimulationGUI gui;
     private SocialNetwork socialNetwork;
+    private boolean displayCharts = true;
     private int nNodes = 0;
     private int nEdges = 0;
     private double averageDegree = 0;
@@ -77,39 +78,47 @@ public class Simulation extends Agent {
         super.takeDown();
     }
 
-    public Map<String, Object> generateGraph(int iterations) {
+    public void setDisplayCharts(boolean displayCharts) {
+        this.displayCharts = displayCharts;
+    }
+
+    public Map<String, Object> generateGraph(int iterations, boolean homophily) {
         Map<String, Object> graphData = socialNetwork.generateGraph(iterations);
         nNodes = (Integer) graphData.get("nodes");
         nEdges = (Integer) graphData.get("edges");
         averageDegree = (2 * nEdges) / nNodes;
 
-        //  Calculate a plot degree distribution
-        Map<Integer, Integer> degreeDistribution = new HashMap<Integer, Integer>();
-        for(int node : socialNetwork.getNodes()) {
-            int degree = socialNetwork.getNodeDegree(node);
-            Integer count = degreeDistribution.get(degree);
-            if(count == null) {
-                count = 0;
+        if(displayCharts) {
+            //  Calculate a plot degree distribution
+            Map<Integer, Integer> degreeDistribution = new HashMap<Integer, Integer>();
+            for(int node : socialNetwork.getNodes()) {
+                int degree = socialNetwork.getNodeDegree(node);
+                Integer count = degreeDistribution.get(degree);
+                if(count == null) {
+                    count = 0;
+                }
+                degreeDistribution.put(degree, count+1);
             }
-            degreeDistribution.put(degree, count+1);
+            List<Point2D> degreeDistributionData = new ArrayList<Point2D>();
+            for(Integer degree : degreeDistribution.keySet()) {
+                degreeDistributionData.add(new Point(degree, degreeDistribution.get(degree)));
+            }
+            new ScatterPlot("Degree distribution", degreeDistributionData, "Degree", "Count", "Agents", true);
         }
-        List<Point2D> degreeDistributionData = new ArrayList<Point2D>();
-        for(Integer degree : degreeDistribution.keySet()) {
-            degreeDistributionData.add(new Point(degree, degreeDistribution.get(degree)));
-        }
-        new ScatterPlot("Degree distribution", degreeDistributionData, "Degree", "Count", "Agents", true);
 
-        int degreeThreshold = (int) (socialNetwork.getMaximumDegree()*0.1 + averageDegree);
+        int degreeThreshold = (int) (socialNetwork.getMaximumDegree()*0.3 + averageDegree);
         hubsFound = 0;
         traitsMap = new HashMap<AID, Trait>();
         for(int nodeID : socialNetwork.getNodes()) {
             Trait trait = new Trait();
-            int nodeDegree = socialNetwork.getNodeDegree(nodeID);
-            if (nodeDegree > degreeThreshold) {
-            //if(socialNetwork.getBetweennessCentrality(nodeID) > 0.1) {
-                trait.extroversion = (Math.random() * 0.3) + 0.7;   //[0.7, 1.0]
-                trait.agreableness = (Math.random() * 0.4) + 0.4;   //[0.4, 0.8]
-                hubsFound++;
+            if(homophily) {
+                int nodeDegree = socialNetwork.getNodeDegree(nodeID);
+                if (nodeDegree > degreeThreshold) {
+                    //if(socialNetwork.getBetweennessCentrality(nodeID) > 0.1) {
+                    trait.extroversion = (Math.random() * 0.3) + 0.7;   //[0.7, 1.0]
+                    trait.agreableness = (Math.random() * 0.4) + 0.4;   //[0.4, 0.8]
+                    hubsFound++;
+                }
             }
             AID aid = new AID(AGENTS_PREFIX + (nodeID-1), AID.ISLOCALNAME);
             traitsMap.put(aid, trait);
@@ -121,7 +130,13 @@ public class Simulation extends Agent {
     }
 
     public void findInfluencers() {
-        int[] pageRankedNodes = socialNetwork.getFirstPageRanked(nNodes);
+        int nNodesToRank;
+        if(SCALE_NODE_RANKED > 1.0) {
+            nNodesToRank = (int) SCALE_NODE_RANKED;
+        } else {
+            nNodesToRank = (int) (SCALE_NODE_RANKED * nNodes);
+        }
+        int[] pageRankedNodes = socialNetwork.getFirstPageRanked(nNodesToRank);
         System.out.println("\n\nPageRank ranking:");
         for (int i = 0; i < pageRankedNodes.length; i++) {
             int node = pageRankedNodes[i];
@@ -195,7 +210,9 @@ public class Simulation extends Agent {
         }
 
         double correlation1 = kendallCorrelation(pageRankedNodes, pageRankMap, customRankMap);
-        System.out.println("\nKendall correlation between PageRank and CustomRank: " + correlation1);
+        System.out.println("\nKendall's correlation between PageRank and CustomRank: " + correlation1);
+        double correlation2 = spearmanCorrelation(pageRankedNodes, pageRankMap, customRankMap);
+        System.out.println("Spearman's correlation between PageRank and CustomRank: " + correlation2);
     }
 
     private double kendallCorrelation(int[] nodes, Map<Integer, Integer> rankings1, Map<Integer, Integer> rankings2) {
@@ -214,7 +231,7 @@ public class Simulation extends Agent {
                     nDiscordant++;
                     continue;
                 }
-                if ((rank1A < rank2A && rank1B > rank2B) || (rank1A > rank2A && rank1B < rank2B)) {
+                if ((rank1A < rank1B && rank2A > rank2B) || (rank1A > rank1B && rank2A < rank2B)) {
                     nDiscordant++;
                 } else {
                     nConcordant++;
@@ -228,13 +245,20 @@ public class Simulation extends Agent {
     private double spearmanCorrelation(int[] nodes, Map<Integer, Integer> rankings1, Map<Integer, Integer> rankings2) {
         double correlation = 0.0;
         for(int node : nodes) {
-            int diff = rankings1.get(node) - rankings2.get(node);
+            Integer rank1 = rankings1.get(node);
+            Integer rank2 = rankings2.get(node);
+            int diff;
+            if(rank1==null || rank2==null) {
+                diff = 1;
+            } else {
+                diff = rankings1.get(node) - rankings2.get(node);
+            }
             correlation += Math.pow(diff, 2);
         }
         return 1 - ((6*correlation) / (nodes.length * (Math.pow(nodes.length, 2)-1)));
     }
 
-    public void startSimulation() {
+    public void startSimulation(int timingOfAgents) {
         logger.info("Start simulation " + socialNetwork.getNodes().length);
         nodesMap = new HashMap<AID, Integer>();
         agentsMap = new HashMap<AID, AgentController>();
@@ -247,7 +271,11 @@ public class Simulation extends Agent {
                 String name = AGENTS_PREFIX + (nodeID-1);
                 AID aid = new AID(name, AID.ISLOCALNAME);
                 Trait trait = traitsMap.get(aid);
-                AgentController agent = getContainerController().createNewAgent(name, Person.class.getName(), trait.toObjectArray());
+                Object[] traitAsArray = trait.toObjectArray();
+                Object[] args = new Object[traitAsArray.length+1];
+                System.arraycopy(traitAsArray, 0, args, 0, traitAsArray.length);
+                args[traitAsArray.length] = timingOfAgents;
+                AgentController agent = getContainerController().createNewAgent(name, Person.class.getName(), args);
                 agent.start();
                 agentsMap.put(aid, agent);
                 nodesMap.put(aid, nodeID);
@@ -315,10 +343,7 @@ public class Simulation extends Agent {
             if(messageSpread.get(msg).size() > messageSpread.get(maxSpread).size()) {
                 maxSpread = msg;
             }
-            //  Add only cascades of size > than averageDegree
-            if(set.size() > averageDegree) {
-                cascades.add(new MessageCascade(msg, set, socialNetwork.getNodeDegree(nodesMap.get(msg.nodes.get(0)))));
-            }
+            cascades.add(new MessageCascade(msg, set, socialNetwork.getNodeDegree(nodesMap.get(msg.nodes.get(0)))));
         }
 
         System.out.println("Max spread message: " + maxSpread.ID + " " + maxSpread.interests() + " startedFrom: " + maxSpread.nodes.get(0).getLocalName() + " - " + messageSpread.get(maxSpread).size());
@@ -339,48 +364,50 @@ public class Simulation extends Agent {
             msg.averageCascadeAgreableness = sumAgreableness / cascadeSize;
         }
 
-        //  Index messages by cascade size
-        Collections.sort(cascades);
-        List<Point2D> degreeCascadeSize = new ArrayList<Point2D>();
-        for(MessageCascade msg : cascades) {
-            degreeCascadeSize.add(new Point(msg.cascade.size(), msg.startingDegree));
-        }
-        new ScatterPlot("Cascade size by starting node degree", degreeCascadeSize, "Cascade size", "Starting node degree", "Cascades");
-
-        Map<Integer, Integer> cascadeSizeDistribution = new HashMap<Integer, Integer>();
-        for(MessageCascade msg : cascades) {
-            Integer count = cascadeSizeDistribution.get(msg.cascade.size());
-            if(count == null) {
-                count = 0;
+        if (displayCharts) {
+            //  Index messages by cascade size
+            Collections.sort(cascades);
+            List<Point2D> degreeCascadeSize = new ArrayList<Point2D>();
+            for(MessageCascade msg : cascades) {
+                degreeCascadeSize.add(new Point(msg.cascade.size(), msg.startingDegree));
             }
-            cascadeSizeDistribution.put(msg.cascade.size(), count+1);
-        }
-        List<Point2D> cascadeSizeDistributionData = new ArrayList<Point2D>();
-        for(Integer cascadeCluster : cascadeSizeDistribution.keySet()) {
-            cascadeSizeDistributionData.add(new Point(cascadeCluster, cascadeSizeDistribution.get(cascadeCluster)));
-        }
-        new ScatterPlot("Cascade size distribution", cascadeSizeDistributionData, "Cascade size", "Count", "Cascades", true);
+            new ScatterPlot("Cascade size by starting node degree", degreeCascadeSize, "Cascade size", "Starting node degree", "Cascades");
 
-        List<Point2D> cascadeSizeByExtroversion = new ArrayList<Point2D>();
-        for(MessageCascade msg : cascades) {
-            double normalizedExtroversion = traitsMap.get(msg.startingNode).extroversion * 100;
-            cascadeSizeByExtroversion.add(new Point(msg.cascade.size(), (int) normalizedExtroversion));
-        }
-        new ScatterPlot("Cascade size by starting node ext.", cascadeSizeByExtroversion, "Cascade size", "Extroversion", "Cascades");
+            Map<Integer, Integer> cascadeSizeDistribution = new HashMap<Integer, Integer>();
+            for(MessageCascade msg : cascades) {
+                Integer count = cascadeSizeDistribution.get(msg.cascade.size());
+                if(count == null) {
+                    count = 0;
+                }
+                cascadeSizeDistribution.put(msg.cascade.size(), count+1);
+            }
+            List<Point2D> cascadeSizeDistributionData = new ArrayList<Point2D>();
+            for(Integer cascadeCluster : cascadeSizeDistribution.keySet()) {
+                cascadeSizeDistributionData.add(new Point(cascadeCluster, cascadeSizeDistribution.get(cascadeCluster)));
+            }
+            new ScatterPlot("Cascade size distribution", cascadeSizeDistributionData, "Cascade size", "Count", "Cascades", true);
 
-        List<Point2D> cascadeSizeByAvgExt = new ArrayList<Point2D>();
-        for(MessageCascade msg : cascades) {
-            double normalizedExtroversion = msg.averageCascadeExtroversion * 100;
-            cascadeSizeByAvgExt.add(new Point(msg.cascade.size(), (int) normalizedExtroversion));
-        }
-        new ScatterPlot("Cascade size by average ext.", cascadeSizeByAvgExt, "Cascade size", "Avg. Extroversion", "Cascades");
+            List<Point2D> cascadeSizeByExtroversion = new ArrayList<Point2D>();
+            for(MessageCascade msg : cascades) {
+                double normalizedExtroversion = traitsMap.get(msg.startingNode).extroversion * 100;
+                cascadeSizeByExtroversion.add(new Point(msg.cascade.size(), (int) normalizedExtroversion));
+            }
+            new ScatterPlot("Cascade size by starting node ext.", cascadeSizeByExtroversion, "Cascade size", "Extroversion", "Cascades");
 
-        List<Point2D> cascadeSizeByAvgAgr = new ArrayList<Point2D>();
-        for(MessageCascade msg : cascades) {
-            double normalizedExtroversion = msg.averageCascadeAgreableness * 100;
-            cascadeSizeByAvgAgr.add(new Point(msg.cascade.size(), (int) normalizedExtroversion));
+            List<Point2D> cascadeSizeByAvgExt = new ArrayList<Point2D>();
+            for(MessageCascade msg : cascades) {
+                double normalizedExtroversion = msg.averageCascadeExtroversion * 100;
+                cascadeSizeByAvgExt.add(new Point(msg.cascade.size(), (int) normalizedExtroversion));
+            }
+            new ScatterPlot("Cascade size by average ext.", cascadeSizeByAvgExt, "Cascade size", "Avg. Extroversion", "Cascades");
+
+            List<Point2D> cascadeSizeByAvgAgr = new ArrayList<Point2D>();
+            for(MessageCascade msg : cascades) {
+                double normalizedExtroversion = msg.averageCascadeAgreableness * 100;
+                cascadeSizeByAvgAgr.add(new Point(msg.cascade.size(), (int) normalizedExtroversion));
+            }
+            new ScatterPlot("Cascade size by average agr.", cascadeSizeByAvgAgr, "Cascade size", "Avg. Agreableness", "Cascades");
         }
-        new ScatterPlot("Cascade size by average agr.", cascadeSizeByAvgAgr, "Cascade size", "Avg. Agreableness", "Cascades");
 
         Map<AID, Integer> aidsByInfluence = new HashMap<AID, Integer>();
         for(MessageCascade msg : cascades) {
@@ -434,9 +461,9 @@ public class Simulation extends Agent {
         }
 
         //  Build the considered node-set
-        int[] consideredNodes = new int[pageRankMap.size()];
+        int[] consideredNodes = new int[customRankMap.size()];
         int pointer = 0;
-        for (Integer node : pageRankMap.keySet()) {
+        for (Integer node : customRankMap.keySet()) {
             consideredNodes[pointer] = node;
             pointer++;
         }
@@ -450,6 +477,8 @@ public class Simulation extends Agent {
         System.out.println("\nSpearman's correlation between PageRank and actual: " + sCorrelation1);
         double sCorrelation2 = spearmanCorrelation(consideredNodes, customRankMap, actualInfluencers);
         System.out.println("Spearman's correlation between CustomRank and actual: " + sCorrelation2);
+
+        System.out.println("\nComposed correlations are\tPA: " + (kCorrelation1*((sCorrelation1+1)/2)) + "\tCA: " + (kCorrelation2*((sCorrelation2+1)/2)));
 
         Person.ticks = 0;
         simulationStarted = false;
